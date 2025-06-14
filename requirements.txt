@@ -1,6 +1,7 @@
-requests
-beautifulsoup4
 pandas
+requests
+nsepython
+python-telegram-bot==13.15
 gspread
 oauth2client
 python-dotenv

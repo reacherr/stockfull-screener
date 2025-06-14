@@ -1,4 +1,5 @@
 import os
+import time
 from dotenv import load_dotenv
 from fetch_technicals import fetch_ohlcv
 from fetch_fundamentals import fetch_fundamentals
@@ -9,7 +10,6 @@ from symbol_fetcher import get_filtered_symbols
 
 load_dotenv()
 
-# 🧠 Multi-tier logic
 def classify_tier(flags):
     score = sum(flags)
     if score >= 3:
@@ -35,31 +35,16 @@ def check_eps_growth(eps_list):
             return False
     return True
 
-def passes_fundamentals(symbol):
-    data = fetch_fundamentals(symbol)
-    if not data:
-        return False, None, None, None, None, None
-
-    roe = data.get("ROE", 0)
-    roce = data.get("ROCE", 0)
-    promoter = data.get("PromoterHolding", 0)
-    eps_list = data.get("EPS", [])
-    sector = data.get("Sector", "Unknown")
-    sector_ok = data.get("SectorStrong", False)
-    promoter_ok = data.get("PromoterTrendOK", None)
-    fii_ok = data.get("FIITrendOK", None)
-
-    if not check_eps_growth(eps_list):
-        return False, None, None, None, None, None
-
-    passes = roe > 15 and roce > 15 and promoter and promoter > 40
-    reason = f"ROE: {roe}%, ROCE: {roce}%, Promoter Holding: {promoter}%, EPS QoQ Growth: OK"
-    return passes, reason, sector, sector_ok, promoter_ok, fii_ok
-
 def format_telegram_message(results):
-    message = "<b>📈 Swing Trade Picks – Auto Screener</b>\n"
+    message = "<b>📈 Swing Trade Picks – Auto Screener</b>
+"
     for stock in results:
-        message += f"\n<b>{stock[0]}</b> ({stock[1]} tier)\nEntry: {stock[2]} | SL: {stock[3]} | Target: {stock[4]}\nSector: {stock[6]}\n{stock[5]}\n"
+        message += f"
+<b>{stock[0]}</b> ({stock[1]} tier)
+Entry: {stock[2]} | SL: {stock[3]} | Target: {stock[4]}
+Sector: {stock[6]}
+{stock[5]}
+"
     return message
 
 def main():
@@ -67,8 +52,19 @@ def main():
     symbols = get_filtered_symbols()
 
     for symbol in symbols:
-        fundamentals_passed, fundamentals_reason, sector, sector_ok, promoter_ok, fii_ok = passes_fundamentals(symbol)
-        if not fundamentals_passed:
+        data = fetch_fundamentals(symbol)
+        if not data:
+            continue
+
+        roe = data.get("ROE", 0)
+        roce = data.get("ROCE", 0)
+        eps = data.get("EPS", [])
+        promoter_ok = data.get("PromoterTrendOK", False)
+        fii_ok = data.get("FIITrendOK", False)
+        sector = data.get("Sector", "Unknown")
+        sector_ok = data.get("SectorStrong", False)
+
+        if not check_eps_growth(eps):
             continue
 
         df = fetch_ohlcv(symbol)
@@ -85,7 +81,9 @@ def main():
         if is_vcp or is_rocket:
             entry, stop, target = calculate_levels(df)
             reason = "VCP pattern" if is_vcp else "Rocket base pattern"
-            reason += " with 3–5 day consolidation | " + fundamentals_reason
+            reason += " with 3–5 day consolidation"
+            reason += f"\nROE: {roe}%, ROCE: {roce}%"
+            reason += f"\nEPS Growth (QoQ): {' >10%' if check_eps_growth(eps) else 'weak'}"
 
             flags = []
             if above_dma:
@@ -93,16 +91,24 @@ def main():
                 reason += " | Above 20DMA"
             if sector_ok:
                 flags.append(True)
-                reason += " | Sector in Growth Phase"
+                reason += f" | Sector: {sector} (Growth Phase)"
+            else:
+                reason += f" | Sector: {sector}"
             if promoter_ok:
                 flags.append(True)
                 reason += " | Promoter Trend: Stable/Increasing"
+            else:
+                reason += " | Promoter Trend: Decreasing"
             if fii_ok:
                 flags.append(True)
                 reason += " | FII Trend: Increasing"
+            else:
+                reason += " | FII Trend: Flat/Decreasing"
 
             tier = classify_tier(flags)
             screener_results.append([symbol, tier, entry, stop, target, reason, sector])
+
+            time.sleep(1.5)  # Avoid rate-limiting
 
     if screener_results:
         send_telegram_message(format_telegram_message(screener_results))

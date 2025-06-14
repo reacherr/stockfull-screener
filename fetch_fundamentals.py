@@ -1,123 +1,95 @@
-
+import time
 import requests
-from bs4 import BeautifulSoup
+from nsepython import nse_stock_financials, nse_eq
+from requests.exceptions import RequestException
 
-PERFORMING_SECTORS = [
-    "IT", "Information Technology", "Software", "Telecom Services",
-    "Auto", "Automobile", "Auto Ancillaries", "Electric Vehicles",
-    "Capital Goods", "Infrastructure", "Industrial Machinery", "Engineering",
-    "FMCG", "Consumer Goods", "Food Processing", "Beverages",
-    "Banks", "Private Banks", "Public Sector Banks", "NBFC", "Financial Services",
-    "Pharma", "Healthcare", "Hospitals", "Biotechnology",
-    "Chemical", "Specialty Chemicals", "Agro Chemicals", "Fertilizers",
-    "Energy", "Power", "Renewable Energy", "Green Energy", "Oil & Gas",
-    "Real Estate", "Construction", "Cement", "Housing",
-    "Defence", "Aerospace", "Railways", "Marine",
-    "Textiles", "Apparel", "Retail", "Consumer Discretionary"
-]
+TRENDLYNE_HEADERS = {
+    "X-RapidAPI-Host": "trendlyne-backend.p.rapidapi.com",
+    "X-RapidAPI-Key": "your_rapidapi_key_here"  # Replace with real key
+}
 
-def check_promoter_trend(values):
-    if len(values) < 2:
-        return None
-    return all(values[i] >= values[i+1] for i in range(len(values) - 1))
-
-def check_fii_trend(data_rows):
-    fii_trend = []
-    for row in data_rows:
-        if "fii" in row.text.lower() or "foreign" in row.text.lower():
-            cells = row.find_all("td")[1:]
-            for cell in cells:
-                try:
-                    val = float(cell.text.replace("%", "").strip())
-                    fii_trend.append(val)
-                except:
-                    continue
-            break
-    if len(fii_trend) >= 2:
-        return all(fii_trend[i] <= fii_trend[i-1] for i in range(1, len(fii_trend)))
-    return None
-
-def fetch_fundamentals(symbol: str) -> dict:
-    url = f"https://www.screener.in/company/{symbol}/consolidated/"
-    headers = {"User-Agent": "Mozilla/5.0"}
-
+def fetch_eps_growth(symbol):
     try:
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            print(f"Failed to fetch data for {symbol}")
-            return {}
+        data = nse_stock_financials(symbol)
+        eps_data = data.get("financials", {}).get("quarterly_results", [])
+        eps_values = [
+            float(row.get("eps", 0))
+            for row in eps_data[:4]
+            if "eps" in row
+        ]
+        return eps_values if len(eps_values) >= 4 else None
+    except Exception as e:
+        print(f"EPS fetch failed for {symbol}: {e}")
+        return None
 
-        soup = BeautifulSoup(response.text, "html.parser")
+def fetch_sector(symbol):
+    try:
+        profile = nse_eq(symbol)
+        return profile.get("sector") or "Unknown"
+    except Exception as e:
+        print(f"Sector fetch failed for {symbol}: {e}")
+        return "Unknown"
 
-        # Overview ratios
-        overview = {}
-        for row in soup.select(".company-ratios table tr"):
-            cells = row.find_all("td")
-            if len(cells) == 2:
-                key = cells[0].text.strip()
-                value = cells[1].text.strip()
-                overview[key] = value
+def fetch_trendlyne_fundamentals(symbol):
+    try:
+        url = f"https://trendlyne-backend.p.rapidapi.com/fundamentals/company_snapshot/{symbol}"
+        resp = requests.get(url, headers=TRENDLYNE_HEADERS, timeout=10)
+        if resp.status_code != 200:
+            print(f"Trendlyne API error for {symbol}: {resp.status_code}")
+            return None
+        data = resp.json()
 
-        roe = float(overview.get("ROE", "0").replace("%", "").strip() or 0)
-        roce = float(overview.get("ROCE", "0").replace("%", "").strip() or 0)
+        roe = data.get("ratios", {}).get("ROE", 0)
+        roce = data.get("ratios", {}).get("ROCE", 0)
 
-        # Sector info
-        sector_tag = soup.select_one(".breadcrumb a[href*='/sector/']")
-        sector = sector_tag.text.strip() if sector_tag else "Unknown"
-        sector_ok = any(s.lower() in sector.lower() for s in PERFORMING_SECTORS)
+        promoter_data = data.get("shareholding", {}).get("promoter_holding", [])
+        fii_data = data.get("shareholding", {}).get("fii_holding", [])
 
-        # Promoter + FII holdings
-        promoter_trend = []
-        fii_trend_ok = None
-        promoter_section = soup.find("section", id="shareholding")
-        if promoter_section:
-            rows = promoter_section.select("tbody tr")
-            for row in rows:
-                if "promoter" in row.text.lower():
-                    cells = row.find_all("td")
-                    for i in range(1, len(cells)):
-                        try:
-                            val = float(cells[i].text.replace("%", "").strip())
-                            promoter_trend.append(val)
-                        except:
-                            continue
-                if fii_trend_ok is None:
-                    fii_trend_ok = check_fii_trend(rows)
+        promoter_ok = False
+        fii_ok = False
 
-        promoter_trend = promoter_trend[:5]
-        promoter_trend_ok = check_promoter_trend(promoter_trend)
-        latest_promoter_holding = promoter_trend[0] if promoter_trend else None
+        if len(promoter_data) >= 4:
+            deltas = [
+                promoter_data[i]["value"] - promoter_data[i - 1]["value"]
+                for i in range(1, 4)
+            ]
+            promoter_ok = all(d >= 0 for d in deltas)
 
-        # EPS extraction
-        eps_values = []
-        tables = soup.find_all("table")
-        for table in tables:
-            if "EPS" in table.text:
-                rows = table.find_all("tr")
-                for row in rows:
-                    if "EPS" in row.text:
-                        cells = row.find_all("td")[1:]
-                        for cell in cells:
-                            try:
-                                eps = float(cell.text.strip())
-                                eps_values.append(eps)
-                            except:
-                                continue
-                        break
-                break
+        if len(fii_data) >= 4:
+            deltas = [
+                fii_data[i]["value"] - fii_data[i - 1]["value"]
+                for i in range(1, 4)
+            ]
+            fii_ok = all(d >= 0 for d in deltas)
 
         return {
             "ROE": roe,
             "ROCE": roce,
-            "PromoterHolding": latest_promoter_holding,
-            "PromoterTrend": promoter_trend,
-            "PromoterTrendOK": promoter_trend_ok,
-            "EPS": eps_values[:4],
-            "Sector": sector,
-            "SectorStrong": sector_ok,
-            "FIITrendOK": fii_trend_ok
+            "PromoterTrendOK": promoter_ok,
+            "FIITrendOK": fii_ok
         }
 
-    except Exception as e:
-        print(f"Error scraping fundamentals for {symbol}: {e}")
-        return {}
+    except RequestException as e:
+        print(f"Trendlyne fetch failed for {symbol}: {e}")
+        return None
+
+def fetch_fundamentals(symbol):
+    time.sleep(1.2)
+    eps_list = fetch_eps_growth(symbol)
+    if not eps_list:
+        return None
+
+    sector = fetch_sector(symbol)
+    trend_data = fetch_trendlyne_fundamentals(symbol)
+    if not trend_data:
+        return None
+
+    return {
+        "EPS": eps_list,
+        "Sector": sector,
+        "SectorStrong": True,  # Placeholder until real sector analysis added
+        "ROE": trend_data["ROE"],
+        "ROCE": trend_data["ROCE"],
+        "PromoterTrendOK": trend_data["PromoterTrendOK"],
+        "FIITrendOK": trend_data["FIITrendOK"]
+    }
