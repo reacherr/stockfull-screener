@@ -1,20 +1,20 @@
-
 import os
-from telegram import Bot
-from dotenv import load_dotenv
-
-load_dotenv()
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+import requests
 
 def send_telegram_message(message: str):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("Missing Telegram credentials in environment.")
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+
+    if not token or not chat_id:
+        print("Telegram credentials not found in environment.")
         return
-    try:
-        bot = Bot(token=TELEGRAM_TOKEN)
-        bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='HTML')
-        print("Telegram message sent.")
-    except Exception as e:
-        print(f"Error sending Telegram message: {e}")
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    response = requests.post(url, data=payload)
+    if response.status_code != 200:
+        print("Failed to send Telegram message:", response.text)
