@@ -36,15 +36,13 @@ def check_eps_growth(eps_list):
     return True
 
 def format_telegram_message(results):
-    message = "<b>📈 Swing Trade Picks – Auto Screener</b>
-"
+    message = "<b>📈 Swing Trade Picks – Auto Screener</b>\n"
     for stock in results:
-        message += f"
-<b>{stock[0]}</b> ({stock[1]} tier)
-Entry: {stock[2]} | SL: {stock[3]} | Target: {stock[4]}
-Sector: {stock[6]}
-{stock[5]}
-"
+        message += (
+            f"\n<b>{stock[0]}</b> ({stock[1]} tier)\n"
+            f"Entry: {stock[2]} | SL: {stock[3]} | Target: {stock[4]}\n"
+            f"Sector: {stock[6]}\n{stock[5]}\n"
+        )
     return message
 
 def main():
