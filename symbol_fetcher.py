@@ -1,1 +1,0 @@
-# Return filtered stock symbols

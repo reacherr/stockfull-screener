@@ -1,1 +1,0 @@
-# Detect chart patterns
